@@ -1,11 +1,13 @@
 {% from "wireguard/map.jinja" import wireguard with context %}
+{% set bootstrap = salt['pillar.get']('bootstrap') %}
+{% set linux_headers_package = "linux-headers-" + grains.get('kernelrelease')|string %}
 
 wireguard_software:
   pkg.installed:
     - pkgs:
-{%- for pkg in wireguard.packages %}
-      - {{ pkg }}
-{%- endfor %}
+      - wireguard
+      - qrencode
+      - {{ linux_headers_package }}
 {%- if wireguard.get('repository', False) %}
     - require:
       - pkgrepo: wireguard_repo
@@ -18,6 +20,15 @@ wireguard_repo:
 {%- endif %}
 
 {%- for interface_name, interface_dict in salt['pillar.get']('wireguard:interfaces', {}).items() %}
+{%- set interface_config = interface_dict.get('config', {}) %}
+
+{%- if bootstrap == true %}
+{%- set _dummy = interface_config.update({'PrivateKey': 'XXXXX_not_set_on_bootstrap_ami_XXXXX'}) %}
+{%- endif %}
+
+net.ipv4.ip_forward:
+  sysctl.present:
+    - value: 1
 
   {% if interface_dict.get('delete', False) %}
 stop and disable wg-quick@{{interface_name}}:
@@ -34,6 +45,7 @@ stop and disable wg-quick@{{interface_name}}:
     - name: wg-quick@{{interface_name}}
     - enable: False
     {% else %}
+      {% if bootstrap == false %}
 restart wg-quick@{{interface_name}}:
   service.running:
     - name: wg-quick@{{interface_name}}
@@ -42,6 +54,7 @@ restart wg-quick@{{interface_name}}:
       - file: wireguard_interface_{{interface_name}}_config
     - require:
       - pkg: wireguard_software
+      {% endif %}
     {% endif %}
 
     {% if interface_dict.get('raw_config') %}
